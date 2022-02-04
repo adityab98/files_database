@@ -1,0 +1,220 @@
+#!/usr/bin/env python
+#create flags to check if table/db created
+
+#imports
+import sqlite3
+from sqlite3 import Error
+from pathlib import Path
+import os
+import sys
+
+#path to DB and the present working directory
+#db is stored in the home directory as ".pyfiles.db"
+dbname = str(Path.home()) + '/.pyfiles.db'
+pwd = os.getcwd()
+
+#list only files that are not present in the database
+def list_files_not_in_db(conn, table_name, pwd):
+    files = os.listdir(".")
+    temp = []
+    for f in files:
+        if (not file_in_db(conn, f, table_name, pwd)):
+            temp.append(f)
+    temp.sort()
+    for i in range(0, len(temp)):
+        print(str(i) + '. ' + temp[i])
+    return temp
+
+#insert file into the database if its not already present
+def insert_file(conn, fname, table_name, pwd):
+    if (not file_in_db(conn, fname, table_name, pwd)):
+        fid = get_id(conn, table_name)
+        #weirdness with quotes
+        fpath = "'" + pwd + '/' + fname + "'"
+        fsize = os.path.getsize(pwd + '/' + fname)
+        sql = "insert into " + table_name + "(id, path, size) values(" + str(get_id(conn, table_name)) + "," + fpath + "," + str(fsize) +")"
+        cursor = conn.cursor()
+        cursor.execute(sql) 
+        conn.commit()
+    else:
+        print("file already added to database")
+
+#the id of the row to be inserted will always be one higher than the highest
+#id already present in the database. this function returns the highest id + 1
+def get_id(conn, table_name):
+    cursor = conn.cursor()
+    cursor.execute("select max(id) from " + table_name)
+    rows = cursor.fetchall()
+    if (rows[0][0] != None):
+        return rows[0][0] + 1
+    else:
+        return 0
+
+#deletes the row from the database
+def delete_row(conn, table_name, fname):
+    cursor = conn.cursor()
+    sql = "delete from " + table_name + " where path='" + fname + "'"
+    cursor.execute(sql)
+    conn.commit()
+
+#checks whetehr the given file is in the database
+def file_in_db(conn, fname, table_name, pwd):
+    cursor = conn.cursor()
+    cursor.execute("select path from " + table_name)
+    rows = cursor.fetchall()
+    fname = pwd + '/' + fname
+    for row in rows:
+        if (fname in row[0]):
+            return True
+    return False
+
+#given the table name, creates the table_command
+def create_table_command(table_name):
+    create = "create table if not exists "
+    cols = """id integer primary key,
+                path text not null,
+                size integer not null"""
+    return create + table_name + ' (\n\t\t' + cols + '\n);'
+
+#create a table given the table command
+def create_table(conn, command):
+    try:
+        c = conn.cursor()
+        c.execute(command)
+    except Error as e:
+        print(e)
+
+#the table name will be the present working directory without any special chars
+#delete more special characters
+def get_table_name(pwd):
+    pwd = pwd.replace("/","")
+    pwd = pwd.replace("\\","")
+    pwd = pwd.replace(":","")
+    return pwd
+
+#starts the connection to the database
+#creates the db if not already present
+def create_connection(dbname):
+    conn = None
+    try:
+        conn = sqlite3.connect(dbname)
+        return conn
+    except Error as e:
+        print(e)
+    return conn
+
+#prints table info in a nice way
+def table_info(conn, table_name):
+    cursor = conn.cursor()
+    cursor.execute("select * from " + table_name)
+    rows = cursor.fetchall()
+    print("\tID\t\t\tPath\t\t\t\tSize")
+    i = 0
+    for row in rows:
+        print(str(i) + ".\t" + str(row[0]) + "\t" + row[1] + "\t" + str(row[2]))
+        i += 1
+    return rows
+
+#does the db exist?
+def db_exists(dbname):
+    return os.path.exists(dbname)
+
+#does the table exist?
+def table_exists(conn, table_name):
+    cursor = conn.cursor()
+    cursor.execute("select name from sqlite_master where type='table' and name='" + table_name + "'")
+    rows = cursor.fetchall()
+    if (len(rows) == 0):
+        return False
+    else:
+        return True
+
+#prints the file
+def print_file(fname):
+    lines = open(fname)
+    print("\tPrinting " + fname)
+    for line in lines:
+        print(line)
+    print("\t\t********************\t\t")
+
+def main():
+
+    table_name = get_table_name(pwd)
+    conn = None
+
+    # check if db exists. if it does, preconnect to db
+    if (db_exists(dbname)):
+        conn = create_connection(dbname)
+
+    menu = "1. Create table and/or db.\n2. Get files in current directory.\n3. Get table info.\n4. Delete table contents.\n5. Exit."
+
+    while (True):
+
+        print(menu)
+        option = int(input("your choice: "))
+
+        #create the db and the table of the pwd
+        if (option == 1):
+            if (not db_exists):
+                conn = create_connection(dbname)
+            create_table(conn, create_table_command(table_name))
+
+        #list files and add them to db
+        elif (option == 2):
+            #in case user forgot to create db and table already
+            if (not db_exists(dbname)):
+                conn = create_connection(dbname)
+            if (not table_exists(conn, table_name)):
+                create_table(conn, create_table_command(table_name))
+            files = list_files_not_in_db(conn, table_name, pwd)
+            print ("Enter the file number to add to the db. Enter -1 to go to the previous screen.")
+            fchoice = int(input("your choice: "))
+            if (fchoice == -1):
+                continue
+            elif (fchoice >= len(files)):
+                print("choice out of bounds")
+            else:
+                insert_file(conn, files[fchoice], table_name, pwd)
+
+        #print table and print file contents
+        elif (option == 3):
+            #in case user forgot to create db and table already
+            if (not db_exists(dbname)):
+                conn = create_connection(dbname)
+            if (not table_exists(conn, table_name)):
+                create_table(conn, create_table_command(table_name))
+            rows = table_info(conn, table_name)
+            print("Enter row number to view. Enter -1 to go to previous screen.")
+            tchoice = int(input("your choice: "))
+            if (tchoice == -1):
+                continue
+            elif (tchoice >= len(rows)):
+                print("choice out of bounds")
+            else:
+                print_file(rows[tchoice][1])
+
+        #print table and delete rows
+        elif (option == 4):
+            #in case user forgot to create db and table already
+            if (not db_exists(dbname)):
+                conn = create_connection(dbname)
+            if (not table_exists(conn, table_name)):
+                create_table(conn, create_table_command(table_name))
+            rows = table_info(conn, table_name)
+            print("Enter row number to delete. Enter -1 to go to previous screen.")
+            dchoice = int(input("your choice: "))
+            if (dchoice == -1):
+                continue
+            elif (dchoice >= len(rows)):
+                print("choice out of bounds")
+            else:
+                delete_row(conn, table_name, rows[dchoice][1])
+
+        #exit
+        else:
+            sys.exit(0)
+
+    conn.close()
+
+if __name__=="__main__":
+    main()
